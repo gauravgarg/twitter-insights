@@ -99,9 +99,12 @@ k2.metric("Stock Mentions", fdf[fdf["category"]=="Stock-Specific"].shape[0])
 k3.metric("Awareness Posts", fdf[fdf["category"]=="Financial Awareness"].shape[0])
 
 # --- Charts
+
 st.subheader("📈 Top Stocks")
-if not fdf.empty and "stock_name" in fdf.columns:
+if not fdf.empty and "stock_name" in fdf.columns and fdf["stock_name"].notna().any():
     st.bar_chart(fdf["stock_name"].value_counts().head(15))
+else:
+    st.info("No data available for chart.")
 
 st.subheader("🗂️ Latest Tweets")
 latest_df = fdf[["created_at","handle","category","stock_name","content"]].copy()

@@ -49,40 +49,51 @@ def categorize(text, patterns):
     return "Financial Awareness", None
 
 def fetch_and_store(handle, patterns):
-    try:
-        logging.info(f"Fetching user: {handle}")
-        user = client.get_user(username=handle)
-        if not user or not user.data:
-            logging.warning(f"User not found: {handle}")
-            return
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"Fetching user: {handle}")
+            user = client.get_user(username=handle)
+            if not user or not user.data:
+                logging.warning(f"User not found: {handle}")
+                return
 
-        tweets = client.get_users_tweets(
-            user.data.id,
-            max_results=10,
-            tweet_fields=["created_at","text","lang"]
-        )
+            tweets = client.get_users_tweets(
+                user.data.id,
+                max_results=10,
+                tweet_fields=["created_at","text","lang"]
+            )
 
-        if not tweets or not tweets.data:
-            logging.info(f"No tweets found for user: {handle}")
-            return
+            if not tweets or not tweets.data:
+                logging.info(f"No tweets found for user: {handle}")
+                return
 
-        for t in tweets.data:
-            category, stock = categorize(t.text, patterns)
-            try:
-                cur.execute(
-                    "INSERT INTO tweets (id, handle, content, category, stock_name, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (str(t.id), f"@{handle}", t.text, category, stock, str(t.created_at))
-                )
-                logging.info(f"Inserted tweet {t.id} for {handle} | {category} | {stock}")
-            except sqlite3.IntegrityError:
-                logging.debug(f"Duplicate tweet {t.id} for {handle}")
-        conn.commit()
-        logging.info(f"Committed tweets for {handle}")
-    except tweepy.TweepyException as e:
-        logging.error(f"Tweepy error for {handle}: {e}")
-    except Exception as e:
-        logging.error(f"Error for {handle}: {e}")
+            for t in tweets.data:
+                category, stock = categorize(t.text, patterns)
+                try:
+                    cur.execute(
+                        "INSERT INTO tweets (id, handle, content, category, stock_name, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (str(t.id), f"@{handle}", t.text, category, stock, str(t.created_at))
+                    )
+                    logging.info(f"Inserted tweet {t.id} for {handle} | {category} | {stock}")
+                except sqlite3.IntegrityError:
+                    logging.debug(f"Duplicate tweet {t.id} for {handle}")
+            conn.commit()
+            logging.info(f"Committed tweets for {handle}")
+            break
+        except tweepy.TooManyRequests as e:
+            # Tweepy >=4.10.0: TooManyRequests is raised for rate limits
+            wait_time = getattr(e, 'retry_after', 900)  # fallback to 15 min if not provided
+            logging.warning(f"Rate limit exceeded for {handle}. Sleeping for {wait_time} seconds.")
+            time.sleep(wait_time)
+        except tweepy.TweepyException as e:
+            logging.error(f"Tweepy error for {handle}: {e}")
+            break
+        except Exception as e:
+            logging.error(f"Error for {handle}: {e}")
+            break
 
 def main_loop():
     if not HANDLES:
