@@ -1,15 +1,3 @@
-#This YAML file defines your deployment setup. It helps make redeployments repeatable and consistent.
-# Note: Highly recommended for infrastructure-as-code deployments.
-
-envVarGroups:
-  - name: twitter-insights-env
-    envVars:
-      - key: BEARER_TOKEN
-        sync: false
-      - key: TWITTER_HANDLES
-        sync: false
-      - key: COLLECTOR_INTERVAL
-        sync: false
 
 services:
   - type: web
@@ -19,13 +7,9 @@ services:
     startCommand: streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
     plan: free
     envVars:
-      - fromGroup: twitter-insights-env
-
-  - type: worker
-    name: twitter-insights-collector
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python collector.py
-    plan: free
-    envVars:
-      - fromGroup: twitter-insights-env
+      - key: BEARER_TOKEN
+        sync: false
+      - key: TWITTER_HANDLES
+        sync: false
+      - key: COLLECTOR_INTERVAL
+        sync: false

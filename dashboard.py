@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 from db_init import get_conn, init_db
 from utils import normalize_keyword
+import threading
+import collector
 
 st.set_page_config(page_title="Stock & Finance Tweets", layout="wide")
 
@@ -102,15 +104,26 @@ if not fdf.empty and "stock_name" in fdf.columns:
     st.bar_chart(fdf["stock_name"].value_counts().head(15))
 
 st.subheader("🗂️ Latest Tweets")
+latest_df = fdf[["created_at","handle","category","stock_name","content"]].copy()
+latest_df.columns = ["Time", "Handle", "Category", "Stock", "Tweet"]
 st.dataframe(
-    fdf[["created_at","handle","category","stock_name","content"]]
-      .rename(columns={
-          "created_at":"Time",
-          "handle":"Handle",
-          "category":"Category",
-          "stock_name":"Stock",
-          "content":"Tweet"
-      }),
+    latest_df,
     use_container_width=True,
     hide_index=True
 )
+# --- Collector Trigger ---
+def run_collector():
+    st.session_state['collecting'] = True
+    try:
+        collector.main_loop()
+        st.success("✅ Tweets collected and saved.")
+    except Exception as e:
+        st.error(f"❌ Collector error: {e}")
+    st.session_state['collecting'] = False
+
+if 'collecting' not in st.session_state:
+    st.session_state['collecting'] = False
+
+if st.button("Collect Latest Tweets", disabled=st.session_state['collecting']):
+    threading.Thread(target=run_collector, daemon=True).start()
+    st.info("⏳ Collecting tweets in background...")

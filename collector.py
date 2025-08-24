@@ -87,15 +87,20 @@ def fetch_and_store(handle, patterns):
 def main_loop():
     if not HANDLES:
         logging.warning("No TWITTER_HANDLES provided. Set env var to collect from usernames.")
+        return
+    keywords = load_keywords()
+    patterns = build_match_patterns(keywords)
+    logging.info(f"{datetime.now()} IST | {len(HANDLES)} handles | {len(keywords)} keywords")
+
+    for h in HANDLES:
+        fetch_and_store(h, patterns)
+
+    logging.info(f"Cycle complete.")
+
+def main_loop_forever():
     while True:
-        keywords = load_keywords()
-        patterns = build_match_patterns(keywords)
-        logging.info(f"{datetime.now()} IST | {len(HANDLES)} handles | {len(keywords)} keywords")
-
-        for h in HANDLES:
-            fetch_and_store(h, patterns)
-
-        logging.info(f"Cycle complete. Sleeping {INTERVAL}s...")
+        main_loop()
+        logging.info(f"Sleeping {INTERVAL}s...")
         time.sleep(INTERVAL)
 
 if __name__ == "__main__":
