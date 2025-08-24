@@ -4,7 +4,7 @@ services:
     name: twitter-insights-dashboard
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
+    startCommand: python fetch_last3days.py --server.port $PORT --server.address 0.0.0.0
     plan: free
     envVars:
       - key: BEARER_TOKEN
