@@ -18,8 +18,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run dashboard.py --server.port $PORT --server.address 0.0.0.0
     plan: free
-    envVarGroups:
-      - twitter-insights-env
+    envVars:
+      - fromGroup: twitter-insights-env
 
   - type: worker
     name: twitter-insights-collector
@@ -27,5 +27,5 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python collector.py
     plan: free
-    envVarGroups:
-      - twitter-insights-env
+    envVars:
+      - fromGroup: twitter-insights-env
