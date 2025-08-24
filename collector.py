@@ -1,7 +1,9 @@
 
 import os, time, re
-from datetime import datetime
-import tweepy, sqlite3
+from datetime import datetime, timedelta
+import sqlite3
+import snscrape.modules.twitter as sntwitter
+from ratelimit import limits, sleep_and_retry
 from dotenv import load_dotenv
 from db_init import get_conn, init_db
 from utils import build_match_patterns, find_first_match, normalize_keyword
@@ -15,19 +17,11 @@ logging.basicConfig(
 logging.info("Starting collector.py...")
 load_dotenv()
 
-BEARER_TOKEN = os.getenv("BEARER_TOKEN")
-if not BEARER_TOKEN:
-    logging.error("Missing BEARER_TOKEN in env.")
-    raise SystemExit("Missing BEARER_TOKEN in env.")
-
-INTERVAL = int(os.getenv("COLLECTOR_INTERVAL", "3600"))
-logging.info(f"Collector interval set to {INTERVAL} seconds.")
+ # Removed interval logic; UI will control fetch timing
 
 handles_env = os.getenv("TWITTER_HANDLES", "")
 HANDLES = [h.strip().lstrip("@") for h in handles_env.split(",") if h.strip()]
 logging.info(f"Handles to collect: {HANDLES}")
-
-client = tweepy.Client(bearer_token=BEARER_TOKEN, wait_on_rate_limit=True)
 
 conn = get_conn()
 init_db(conn)
@@ -48,52 +42,60 @@ def categorize(text, patterns):
     logging.debug("Categorized as Financial Awareness.")
     return "Financial Awareness", None
 
+@sleep_and_retry
+@limits(calls=15, period=900)  # 15 calls per 15 minutes (Twitter's public rate limit)
 def fetch_and_store(handle, patterns):
-    import time
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            logging.info(f"Fetching user: {handle}")
-            user = client.get_user(username=handle)
-            if not user or not user.data:
-                logging.warning(f"User not found: {handle}")
-                return
+    logging.info(f"--- Start fetching tweets for user: {handle} ---")
+    try:
+        # Get latest tweet date for this handle from DB
+        cur.execute("SELECT MAX(datetime(created_at)) FROM tweets WHERE handle = ?", (f"@{handle}",))
+        row = cur.fetchone()
+        latest_db_date = row[0]
+        if latest_db_date:
+            latest_db_date = datetime.fromisoformat(latest_db_date)
+        else:
+            latest_db_date = None
 
-            tweets = client.get_users_tweets(
-                user.data.id,
-                max_results=10,
-                tweet_fields=["created_at","text","lang"]
-            )
-
-            if not tweets or not tweets.data:
-                logging.info(f"No tweets found for user: {handle}")
-                return
-
-            for t in tweets.data:
-                category, stock = categorize(t.text, patterns)
-                try:
-                    cur.execute(
-                        "INSERT INTO tweets (id, handle, content, category, stock_name, created_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (str(t.id), f"@{handle}", t.text, category, stock, str(t.created_at))
-                    )
-                    logging.info(f"Inserted tweet {t.id} for {handle} | {category} | {stock}")
-                except sqlite3.IntegrityError:
-                    logging.debug(f"Duplicate tweet {t.id} for {handle}")
-            conn.commit()
-            logging.info(f"Committed tweets for {handle}")
-            break
-        except tweepy.TooManyRequests as e:
-            # Tweepy >=4.10.0: TooManyRequests is raised for rate limits
-            wait_time = getattr(e, 'retry_after', 900)  # fallback to 15 min if not provided
-            logging.warning(f"Rate limit exceeded for {handle}. Sleeping for {wait_time} seconds.")
-            time.sleep(wait_time)
-        except tweepy.TweepyException as e:
-            logging.error(f"Tweepy error for {handle}: {e}")
-            break
-        except Exception as e:
-            logging.error(f"Error for {handle}: {e}")
-            break
+        three_days_ago = datetime.now() - timedelta(days=3)
+        tweets = []
+        tweet_count = 0
+        for tweet in sntwitter.TwitterUserScraper(handle).get_items():
+            # Only process actual Tweet objects
+            if not isinstance(tweet, sntwitter.Tweet):
+                continue
+            # Only consider tweets from last 3 days
+            if tweet.date < three_days_ago:
+                break
+            # Stop if tweet is already in DB (by date)
+            if latest_db_date and tweet.date <= latest_db_date:
+                break
+            tweets.append(tweet)
+            tweet_count += 1
+            if len(tweets) >= 10:
+                break
+        logging.info(f"Fetched {tweet_count} tweets for user: {handle}")
+        if not tweets:
+            logging.info(f"No new tweets found for user: {handle}")
+            logging.info(f"--- End fetching tweets for user: {handle} ---")
+            return
+        for t in tweets:
+            category, stock = categorize(t.content, patterns)
+            try:
+                cur.execute(
+                    "INSERT INTO tweets (id, handle, content, category, stock_name, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(t.id), f"@{handle}", t.content, category, stock, str(t.date))
+                )
+                logging.info(f"Inserted tweet {t.id} for {handle} | {category} | {stock}")
+            except sqlite3.IntegrityError:
+                logging.debug(f"Duplicate tweet {t.id} for {handle}")
+            except Exception as e:
+                logging.error(f"DB error for tweet {t.id} for {handle}: {e}")
+        conn.commit()
+        logging.info(f"Committed tweets for {handle}")
+        logging.info(f"--- End fetching tweets for user: {handle} ---")
+    except Exception as e:
+        logging.error(f"Error for {handle}: {e}", exc_info=True)
 
 def main_loop():
     if not HANDLES:
@@ -105,14 +107,9 @@ def main_loop():
 
     for h in HANDLES:
         fetch_and_store(h, patterns)
+        time.sleep(3)  # polite delay between users
 
     logging.info(f"Cycle complete.")
-
-def main_loop_forever():
-    while True:
-        main_loop()
-        logging.info(f"Sleeping {INTERVAL}s...")
-        time.sleep(INTERVAL)
 
 if __name__ == "__main__":
     main_loop()

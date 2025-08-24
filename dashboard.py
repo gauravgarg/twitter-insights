@@ -61,8 +61,8 @@ if uploaded is not None:
                 new_keywords.add(t)
 
         preview = sorted({normalize_keyword(k) for k in new_keywords})
-        st.sidebar.caption("Preview (first 20):")
-        st.sidebar.write(preview[:20])
+        st.sidebar.caption("Preview (first 5):")
+        st.sidebar.write(preview[:5])
 
         if st.sidebar.button("Add JSON Keywords to DB"):
             count = add_keywords(preview)
@@ -74,6 +74,10 @@ if uploaded is not None:
 # --- Load data & keywords
 df = load_df()
 keywords = load_keywords()
+
+# Warn or disable collector button if no keywords
+if not keywords:
+    st.warning("No keywords loaded! Please upload your JSON to initialize keywords before collecting tweets.")
 
 # --- Filters
 c1, c2, c3 = st.columns(3)
@@ -127,6 +131,10 @@ def run_collector():
 if 'collecting' not in st.session_state:
     st.session_state['collecting'] = False
 
-if st.button("Collect Latest Tweets", disabled=st.session_state['collecting']):
-    threading.Thread(target=run_collector, daemon=True).start()
-    st.info("⏳ Collecting tweets in background...")
+collector_disabled = st.session_state['collecting'] or not keywords
+if st.button("Collect Latest Tweets", disabled=collector_disabled):
+    if not keywords:
+        st.error("❌ Cannot collect tweets: No keywords loaded.")
+    else:
+        threading.Thread(target=run_collector, daemon=True).start()
+        st.info("⏳ Collecting tweets in background...")
