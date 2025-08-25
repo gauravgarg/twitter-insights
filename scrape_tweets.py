@@ -4,57 +4,58 @@ import asyncio
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
-async def scrape_last_2_days_tweets(url):
+async def scrape_last_3_days_tweets(url):
     tweets = []
+    today = datetime.utcnow().date()
+    three_days_ago = today - timedelta(days=3)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         await page.goto(url)
         await page.wait_for_timeout(5000)
-        for _ in range(10):
+        last_height = None
+        scroll_limit = 30
+        scroll_count = 0
+        while scroll_count < scroll_limit:
+            tweet_articles = await page.locator('article').all()
+            new_tweets = []
+            for tweet in tweet_articles:
+                time_locator = tweet.locator('time').first
+                if not await time_locator.count():
+                    continue
+                tweet_date_str = await time_locator.get_attribute('datetime')
+                if not tweet_date_str:
+                    continue
+                tweet_date = datetime.fromisoformat(tweet_date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                tweet_date_only = tweet_date.date()
+                text_locator = tweet.locator('[lang]').first
+                tweet_text = await text_locator.inner_text() if await text_locator.count() else ""
+                new_tweets.append({"date": tweet_date_str, "date_obj": tweet_date_only, "text": tweet_text})
+                print(f"Found tweet date: {tweet_date_str} | text: {tweet_text}")
+            for nt in new_tweets:
+                if nt not in tweets:
+                    tweets.append(nt)
             await page.evaluate("window.scrollBy(0, window.innerHeight);")
             await page.wait_for_timeout(2000)
-        tweet_articles = await page.locator('article').all()
-        from dateutil import parser
-        import re
-        today = datetime.utcnow().date()
-        two_days_ago = today - timedelta(days=2)
-        month_map = {m: i for i, m in enumerate(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], 1)}
-        filtered_tweets = []
-        for idx, tweet in enumerate(tweet_articles):
-            try:
-                raw_text = await tweet.inner_text()
-                match = re.search(r'\b([A-Za-z]{3,9})\s(\d{1,2})\b', raw_text)
-                if not match:
-                    print(f"No date found in article {idx}")
-                    continue
-                month_str, day_str = match.group(1)[:3], match.group(2)
-                month = month_map.get(month_str)
-                day = int(day_str)
-                tweet_date = datetime(today.year, month, day).date() if month and day else None
-                if not tweet_date:
-                    print(f"Could not parse date in article {idx}")
-                    continue
-                # Remove header lines (username, handle, date)
-                lines = raw_text.split('\n')
-                for i, line in enumerate(lines):
-                    if re.match(r'^[A-Za-z]{3,9}\s\d{1,2}$', line):
-                        tweet_text = '\n'.join(lines[i+1:]).strip()
-                        break
-                else:
-                    tweet_text = raw_text.strip()
-                filtered_tweets.append({"date": tweet_date.strftime('%Y-%m-%d'), "text": tweet_text})
-            except Exception as e:
-                print(f"Error parsing article {idx}: {e}")
-        tweets = filtered_tweets
+            current_height = await page.evaluate("document.body.scrollHeight")
+            if last_height == current_height:
+                break
+            last_height = current_height
+            scroll_count += 1
         await browser.close()
     return tweets
 
 if __name__ == "__main__":
-    user_profile = "https://x.com/gorv_garg"
-    tweets = asyncio.run(scrape_last_2_days_tweets(user_profile))
-    print("\nFetched tweets from last 2 days:")
-    for tweet in tweets:
-        # Replace newlines in tweet text with spaces and collapse multiple spaces
-        clean_text = ' '.join(tweet['text'].split())
-        print(f"{tweet['date']} | {clean_text}")
+    user_profile = "https://x.com/parvejkhan2009"
+    tweets = asyncio.run(scrape_last_3_days_tweets(user_profile))
+    if not tweets:
+        print("No tweets found.")
+    # Sort tweets by date descending
+    tweets_sorted = sorted(tweets, key=lambda x: x['date_obj'], reverse=True)
+    # Get the latest 5 days
+    latest_dates = sorted({t['date_obj'] for t in tweets_sorted}, reverse=True)[:5]
+    for tweet in tweets_sorted:
+        if tweet['date_obj'] in latest_dates:
+            clean_text = ' '.join(tweet['text'].split())
+            print(f"{tweet['date']} | {clean_text}")
+    print(f"Total tweets in last 3 days: {len(tweets)}")
