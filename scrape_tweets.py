@@ -46,7 +46,7 @@ async def scrape_last_3_days_tweets(url):
     return tweets
 
 if __name__ == "__main__":
-    user_profile = "https://x.com/parvejkhan2009"
+    user_profile = "https://x.com/gorv_garg"
     tweets = asyncio.run(scrape_last_3_days_tweets(user_profile))
     if not tweets:
         print("No tweets found.")
